@@ -1,25 +1,33 @@
-BSD 2-Clause License
-
-Copyright (c) 2020, Stacy Olivas
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-- Window, Door, and Sensor HVAC Control (WDSC HVAC) plugin v1.2
+-- Code originally by mcvflorin and posted to
+-- http://forum.micasaverde.com/index.php/topic,4327.45.html
+-- Packaged in plugin form by SOlivas, with modifications 
+--
+-- History:
+-- 1.0 - Initial version released. 
+--       mcvflorin's code with modifications to turn thermostats to specified modes (On or Off) during check if
+--       door or window sensor is tripped.  Currently does not support internal motion sensors in this 
+--       version.  May be added in a future release.
+-- 1.1 - Implemented urn:upnp-org:serviceId:SwitchPower1 to make it easy to trigger scenes when OnMode and 
+--       OffMode fire.  Also added icon in .json file.
+-- 1.2 - Implemented temperature sensor support.  By defining temperature sensors, a high and low
+--       limit and an action to do if each it reached or exceeded, you can control your HVAC system
+--       based on climate conditions.  Direct Twilio Plugin support has been removed.
+--		 Also standardized the values used to control the settings across all modes.
+--
+--
+-- While I do not claim copyright for this plugin, I do feel that the following from the BSD license
+-- is appropriate, since this is controlling your thermostat connected to your HVAC equipment and there 
+-- is always possibility for things to not work in the way in which they were intended.
+--
+-- ** USE AT YOUR OWN RISK!!  IF YOUR HVAC EQUIPMENT MELTS DOWN, BREAKS, OR CATCHES FIRE/EXPLODES 
+-- ** YOU HAVE BEEN WARNED!  
+--
+--THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED 
+--WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A 
+--PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+--ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+--TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) 
+--HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
+--NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+--POSSIBILITY OF SUCH DAMAGE.
