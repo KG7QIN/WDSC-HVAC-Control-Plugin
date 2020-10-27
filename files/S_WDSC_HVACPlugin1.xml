@@ -4,6 +4,14 @@
 		<major>1</major>
 		<minor>0</minor>
 	</specVersion>
+	<serviceStateTable>
+		<stateVariable sendEvents="yes">
+			<name>Status</name>
+			<dataType>boolean</dataType>
+			<defaultValue>0</defaultValue>
+			<shortCode>status</shortCode>
+		</stateVariable>
+	</serviceStateTable>
 	<actionList>
 		<action>
 			<name>RestartPolling</name>

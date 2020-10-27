@@ -13,12 +13,14 @@
 --       mcvflorin's code with modifications to turn thermostats to specified modes (On or Off) during check if
 --       door or window sensor is tripped.  Currently does not support internal motion sensors in this 
 --       version.  May be added in a future release.
+-- 1.1 - Implemented urn:upnp-org:serviceId:SwitchPower1 to make it easy to trigger scenes when OnMode and 
+--       OffMode fire.  Also added icon in .json file.
 --
 -- While I do not claim copyright for this plugin, I do feel that the following from the BSD license
 -- is appropriate, since this is controlling your thermostat connected to your HVAC equipment and there 
 -- is always possibility for things to not work in the way in which they were intended.
 --
--- ** USE AT YOUR OWN RISK!!  IF YOUR HVAC EQUIPMENT MELTS DOWN, BREAKS, OR CATCHES FIRE OR EXPLODES
+-- ** USE AT YOUR OWN RISK!!  IF YOUR HVAC EQUIPMENT MELTS DOWN, BREAKS, OR CATCHES FIRE/EXPLODES 
 -- ** YOU HAVE BEEN WARNED!  
 --
 --THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED 
@@ -64,9 +66,12 @@ end
 
 -- ReadVariable or set to default function
 function readVariable(lul_device, devicetype, name, defaultValue)
-	WDSCLog("readVariable: " .. name,2)
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("readVariable: " .. name,2)
+	end
 	local var = luup.variable_get(devicetype,name, lul_device)
 	if (var == nil) then
+		WDSCLog("Variable '" .. name .. "' not defined, setting to '" .. defaultValue .. "'",2)
 		var = defaultValue
 		luup.variable_set(devicetype,name,var,lul_device)
 		end
@@ -229,6 +234,16 @@ function checkForTrippedSensors()
 	
     if (wdSensorTripped and (WDSC_Interval ~=0)) then
 
+-- Check Status, if 1 then change to 0
+		local pStatus = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", "0")
+		if (pStatus == "1") then
+			writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", 0)	
+			writeVariable(WDSC_DEVICE_ID, SWITCH_SERVICE, "Status", 0)
+			WDSCLog("Status is now 0 (Off)",2)
+		else
+			WDSCLog("Status already 0 (Off), skipping...",2)
+		end
+	
 		local NotifyMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "NotifyMode", "0")
 		local TwilioNumber = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioNumber", "*undefined*")
 		local TwilioMessage = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioMessage", "*undefined*")
@@ -303,6 +318,16 @@ function WDSC_Poll()
 		local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
 		WDSC_Interval = tonumber(WDSC_Interval)
 	
+-- Check Status, if 0 then change to 1
+		local pStatus = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", "0")
+		if (pStatus == "0") then
+			writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", 1)
+			writeVariable(WDSC_DEVICE_ID, SWITCH_SERVICE, "Status", 1)
+			WDSCLog("Status is now 1 (On)",2)
+		else
+			WDSCLog("Status already 1 (On), skipping...",2)			
+		end
+
 -- Only run if the Refresh interval is not set to 0 -- keeps thermostat from being set to OnMode when
 -- it may be controlled elsewhere
 

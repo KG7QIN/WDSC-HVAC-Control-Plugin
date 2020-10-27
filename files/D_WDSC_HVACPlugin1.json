@@ -1,0 +1,106 @@
+{
+    "flashicon": "icons\/TempLeakSensor.png",
+    "halloIconsDir": "pics/hallo",
+    "x": "2",
+    "y": "4",
+    "doc_url": {
+        "doc_language": 1,
+        "doc_manual": 1,
+        "doc_version": 1,
+        "doc_platform": 0,
+        "doc_page": "http://forum.micasaverde.com/index.php/topic,15982.msg121764.html#msg121764"
+    },
+    "Tabs": [
+		{
+			"Label": {
+				"lang_tag": "settings",
+				"text": "Settings"
+			},
+			"Position": "1",
+			"TabType": "javascript",
+			"ScriptName": "shared.js",
+			"Function": "simple_device"
+		},
+		{
+			"Label": {
+				"lang_tag": "advanced",
+				"text": "Advanced"
+			},
+			"Position": "2",
+			"TabType": "javascript",
+			"ScriptName": "shared.js",
+			"Function": "advanced_device"
+		},
+		{
+			"Label": {
+				"lang_tag": "device_options",
+				"text": "Device Options"
+			},
+			"Position": "3",
+			"TabType": "javascript",
+			"ScriptName": "shared.js",
+			"Function": "device_zwave_options"
+		},
+		{
+			"Label": {
+				"lang_tag": "logs",
+				"text": "Logs"
+			},
+			"Position": "4",
+			"TabType": "javascript",
+			"ScriptName": "shared.js",
+			"Function": "device_logs"
+		},
+		{
+			"Label": {
+				"lang_tag": "notifications",
+				"text": "Notifications"
+			},
+			"Position": "5",
+			"TabType": "javascript",
+			"ScriptName": "shared.js",
+			"Function": "device_notifications"
+		}
+	],
+	"eventList2": [
+        {
+            "id": 1,
+            "label": {
+                "lang_tag": "a_device_is_turned_on_off",
+                "text": "A device is turned on or off"
+            },
+            "serviceId": "urn:upnp-org:serviceId:SwitchPower1",
+            "argumentList": [
+                {
+                    "id": 1,
+                    "dataType": "boolean",
+                    "defaultValue": "1",
+                    "allowedValueList": [
+                        {
+                            "Off": "0",
+                            "HumanFriendlyText": {
+                                "lang_tag": "hft_device_turned_off",
+                                "text": "_DEVICE_NAME_ is turned off"
+                            }
+                        },
+                        {
+                            "On": "1",
+                            "HumanFriendlyText": {
+                                "lang_tag": "hft_device_turned_on",
+                                "text": "_DEVICE_NAME_ is turned on"
+                            }
+                        }
+                    ],
+                    "name": "Status",
+                    "comparisson": "=",
+                    "prefix": {
+                        "lang_tag": "which_mode",
+                        "text": "Which mode"
+                    },
+                    "suffix": {}
+                }
+            ]
+        }
+    ],
+    "DeviceType": "urn:schemas-wdsc-hvac-org:device:WDSC_HVAC:1"
+}
