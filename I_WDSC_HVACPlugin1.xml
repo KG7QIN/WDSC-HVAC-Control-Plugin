@@ -1,0 +1,491 @@
+<?xml version="1.0"?>
+<implementation>
+<functions>
+
+-- ******************************************************
+-- Window, Door, and Sensor HVAC Control (WDSC HVAC) plugin v1.0
+-- Code originally by mcvflorin and posted to
+-- http://forum.micasaverde.com/index.php/topic,4327.45.html
+-- Packaged in plugin form by SOlivas, with modifications 
+--
+-- History:
+-- 1.0 - Initial version released. 
+--       mcvflorin's code with modifications to turn thermostats to specified modes (On or Off) during check if
+--       door or window sensor is tripped.  Currently does not support internal motion sensors in this 
+--       version.  May be added in a future release.
+--
+-- While I do not claim copyright for this plugin, I do feel that the following from the BSD license
+-- is appropriate, since this is controlling your thermostat connected to your HVAC equipment and there 
+-- is always possibility for things to not work in the way in which they were intended.
+--
+-- ** USE AT YOUR OWN RISK!!  IF YOUR HVAC EQUIPMENT MELTS DOWN, BREAKS, OR CATCHES FIRE OR EXPLODES
+-- ** YOU HAVE BEEN WARNED!  
+--
+--THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED 
+--WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A 
+--PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+--ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+--TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) 
+--HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
+--NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+--POSSIBILITY OF SUCH DAMAGE.
+--
+-- Information:
+--
+-- ** Implements code from the following:
+-- 
+-- ** A modified version of the String 2 Lua code found at: 
+-- **    http://www.gymbyl.com/programming/s2t.html
+--
+-- ******************************************************
+
+-- global declarations
+local WDSC_PLUGIN_SID = "urn:wdsc-hvac-org:device:WDSC_HVAC1"
+local HVAC_SERVICE = "urn:upnp-org:serviceId:HVAC_UserOperatingMode1"
+local SECURITY_SENSOR_SERVICE ="urn:micasaverde-com:serviceId:SecuritySensor1"
+local SWITCH_SERVICE = "urn:upnp-org:serviceId:SwitchPower1"
+
+-- define tables
+local wdSensorIdPair = {}
+local thermostats = {}
+local WDSC_DEVICE_ID = 0
+local WDSCVerboseDebug = 0
+
+-- Log function
+function WDSCLog(message, lvl)
+   luup.log("WDSC HVAC- " .. message, lvl)
+end
+  
+-- WriteVariable function
+function writeVariable(lul_device, devicetype, name, value)
+		var = value
+        luup.variable_set(devicetype,name,var,lul_device)
+end
+
+-- ReadVariable or set to default function
+function readVariable(lul_device, devicetype, name, defaultValue)
+	WDSCLog("readVariable: " .. name,2)
+	local var = luup.variable_get(devicetype,name, lul_device)
+	if (var == nil) then
+		var = defaultValue
+		luup.variable_set(devicetype,name,var,lul_device)
+		end
+	return var
+end
+
+---
+-- ****************************************
+-- String 2 table functions
+---
+local function findAll(str,char)
+	local t={}
+	for i=1, #str do
+		if str:sub(i, i)==char then
+			t[#t+1]=i
+		end
+	end
+	return t
+end
+
+local function removeChars(str,char)
+	return str:gsub(char, "")
+end
+
+local function isNumeric(str) 
+	return tonumber(str) and true or false 
+end
+
+local function getValue(str)
+	local returnString=str
+	if returnString=="true" then
+		return true
+	elseif returnString=="false" then
+		return false
+	elseif isNumeric(returnString) then
+		return tonumber(returnString)
+	else
+		return returnString
+	end
+end
+
+function stringToTable(str)
+	local str=str
+	str=removeChars(str, " ")
+	
+	local t={}	
+	local stringValues={}
+	local prevComma=1
+	
+	local commaTable=findAll(str, ",")
+	
+	for i=1, #commaTable+1 do
+		stringValues[#stringValues+1]=str:sub(prevComma, commaTable[i])
+		
+		stringValues[#stringValues]=removeChars(stringValues[#stringValues], ",")
+		stringValues[#stringValues]=removeChars(stringValues[#stringValues], "}")
+		stringValues[#stringValues]=removeChars(stringValues[#stringValues], "{")
+		stringValues[#stringValues]=removeChars(stringValues[#stringValues], "\t")
+		stringValues[#stringValues]=removeChars(stringValues[#stringValues], "\n")
+		stringValues[#stringValues]=removeChars(stringValues[#stringValues], "\"")
+		
+		prevComma=commaTable[i]
+	end
+	
+	for i=1, #stringValues do
+		if (WDSCVerboseDebug == "1") then
+			WDSCLog("String2Table: stringValues[" .. i .. "] - " .. stringValues[i],2)
+		end
+		local equalSign, nilValue=string.find(stringValues[i], "=")
+		nilValue=nil
+		
+		local leftSide=string.sub(stringValues[i], 1, equalSign-1)
+		
+		local rightSide=string.sub(stringValues[i], equalSign+1, #stringValues[i])
+	
+		if (WDSCVerboseDebug == "1") then
+			WDSCLog("String2Table: leftSide - " .. leftSide,2)
+			WDSCLog("String2Table: rightSide - " .. rightSide,2)
+		end
+		
+--		t[leftSide]=getValue(rightSide)
+		t[leftSide]=rightSide
+	end
+		
+	return t
+end
+---
+-- ****************************************
+---
+
+
+---
+-- Restart timer for checks
+---
+function restartTimer()
+	-- check the default poll period and resubmit using
+	-- the value set in Refresh or default it to 300 seconds (5 minutes)
+	local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
+    WDSC_Interval = tonumber(WDSC_Interval)
+  
+	-- if not 0, but less than 300 or more than 86400, reset to 300 (default)
+    if (WDSC_Interval == nil or (WDSC_Interval ~= 0 and WDSC_Interval &lt; 300) or WDSC_Interval > 86400) then
+        WDSC_Interval = "300"
+		writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", WDSC_Interval)
+    end
+
+	WDSCLog("Refresh interval: " .. WDSC_Interval,50)
+	-- 0 = disable automatic refresh
+    if (WDSC_Interval ~=0) then
+        luup.call_timer("WDSC_Poll", 1, tostring(WDSC_Interval).."s", "")
+    end
+end
+
+---
+-- Reset/Restart Polling Delay
+---
+function WDSC_Restart(lul_device, delay)
+    WDSC_Interval = tonumber(delay)
+  
+	-- if not 0, but less than 300 or more than 86400, reset to 300 (default)
+    if (WDSC_Interval == nil or (WDSC_Interval ~= 0 and WDSC_Interval &lt; 300) or WDSC_Interval > 86400) then
+        WDSC_Interval = "300"
+		writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", WDSC_Interval)
+    end
+
+	WDSCLog("Refresh interval: " .. WDSC_Interval,50)
+	-- 0 = disable automatic refresh
+    if (WDSC_Interval ~=0) then
+        luup.call_timer("WDSC_Poll", 1, tostring(WDSC_Interval).."s", "")
+    end
+end	
+
+---
+-- Check if there are tripped sensors. If there are, then turn the thermostats to OffMode.
+---
+function checkForTrippedSensors()
+    -- Assume that no sensors are still tripped.
+    wdSensorTripped = false
+
+    for k, v in pairs(wdSensorIdPair) do
+        local tripped = luup.variable_get (SECURITY_SENSOR_SERVICE, "Tripped", tonumber(k)) or "0"
+        if (tripped == "0") then
+            WDSCLog(v .. "' is not tripped.",50)
+        else
+            WDSCLog(v .. "' IS TRIPPED!",50)
+            wdSensorTripped = true
+            break
+        end
+    end
+
+	local OffMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OffMode", "0")
+	OffMode = tonumber(OffMode)
+	local modeTmp = "Off"
+
+	local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
+	WDSC_Interval = tonumber(WDSC_Interval)
+	
+-- Only run if the Refresh interval is not set to 0 -- keeps thermostat from being set to OffMode when
+-- it may be controlled elsewhere
+	
+    if (wdSensorTripped and (WDSC_Interval ~=0)) then
+
+		local NotifyMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "NotifyMode", "0")
+		local TwilioNumber = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioNumber", "*undefined*")
+		local TwilioMessage = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioMessage", "*undefined*")
+		local TwilioPluginID = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioPluginID", "0")
+		
+		if (NotifyMode == "1") then
+			WDSCLog("Sending notification to " .. TwilioNumber .. " - '" .. TwilioMessage .. "'",50)
+			luup.call_action("urn:twilioapi-org:serviceId:TwilioInterface1", "SendSMSMessage",{ PhoneNumber=TwilioNumber, Message=TwilioMessage}, TwilioPluginID)
+		end
+	
+        for k, v in pairs (thermostats) do
+			if (OffMode == 1) then
+				modeTmp = "HeatOn"
+			elseif (OffMode == 2) then
+				modeTmp = "CoolOn"
+			end
+			
+			if (OffMode == 3) then
+				local status = luup.variable_get(SWITCH_SERVICE, "Status", tonumber(k)) or "0"
+				if (status == "0") then
+					WDSCLog("Thermostat " .. v .. " is already in Energy Savings Mode.  Skipping...",50)
+				else
+					WDSCLog("Switching Thermostat " .. v .. " to Energy Savings Mode.",50)
+					luup.call_action(SWITCH_SERVICE,"SetTarget",{ newTargetValue="0" }, tonumber(k))
+				end
+			else
+				if (OffMode ~=99) then
+					local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","ModeStatus",tonumber(k))
+					if (modeTmp ~= modeStatus) then
+						WDSCLog("Turning thermostat '" .. v .. "' to '" .. modeTmp .. "'.",50)
+						luup.call_action (HVAC_SERVICE, "SetModeTarget",  {NewModeTarget = modeTmp}, tonumber(k))
+					else
+						WDSCLog("Thermostat '" .. v .. "' already set to '" .. modeTmp .. "'.  Skipping...",50)
+					end
+				else
+					WDSCLog("OffMode = 99.  Doing nothing.",50)
+				end
+			end
+        end
+    end
+
+-- only restart the timer if the Refresh interval is not 0
+	if (WDSC_Interval ~=0) then
+		restartTimer()
+	end
+end
+
+---
+-- Main check function
+---
+function WDSC_Poll()
+-- Assume that no sensors are tripped.
+	local wdSensorTripped = false
+
+-- If any sensor is tripped, set the global variable for tripped status.
+	for k, v in pairs (wdSensorIdPair) do
+		local tripped = luup.variable_get (SECURITY_SENSOR_SERVICE, "Tripped", tonumber(k)) or "0"
+		if (tripped == "0") then
+			WDSCLog("Sensor '" .. v .. "' is not tripped.",50)
+		else
+			WDSCLog("Sensor '" .. v .. "' IS TRIPPED!",50)
+			wdSensorTripped = true
+			break
+		end
+	end
+	
+-- Set Thermostat back to mode defined "OnMode" if no sensors are not tripped (default="Off")
+	if(wdSensorTripped) then
+	
+		WDSCLog("Sensor was tripped, skipping...",50)
+	else
+		local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
+		WDSC_Interval = tonumber(WDSC_Interval)
+	
+-- Only run if the Refresh interval is not set to 0 -- keeps thermostat from being set to OnMode when
+-- it may be controlled elsewhere
+
+		if (WDSC_Interval ~=0) then
+			local OnMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OnMode", "1")
+			OnMode = tonumber(OnMode)
+			local modeTmp = "Off"
+		
+			for k, v in pairs (thermostats) do
+				local tStat = luup.variable_get(HVAC_SERVICE, "ModeTarget", tonumber(k))
+			
+				if (OnMode == 1) then
+					modeTmp = "AutoChangeOver"
+				elseif (OnMode == 2) then
+					modeTmp = "HeatOn"
+				elseif (OnMode == 3) then
+					modeTmp = "CoolOn"
+				end
+
+				if (OnMode == 4) then
+					local status = luup.variable_get(SWITCH_SERVICE, "Status", tonumber(k)) or "0"
+					if (status == "0") then
+						WDSCLog("Switching Thermostat " .. v .. " to Normal Mode.",50)
+						luup.call_action(SWITCH_SERVICE,"SetTarget",{ newTargetValue="1" }, tonumber(k))
+					else
+						WDSCLog("Thermostat " .. v .. " is already in Normal Mode.  Skipping...",50)							
+					end					
+				else
+					if (OnMode ~=99) then
+						local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","ModeStatus",tonumber(k))
+						if (modeTmp ~= modeStatus) then
+							WDSCLog("Turning thermostat '" .. v .. "' to '" .. modeTmp .. "'.",50)
+							luup.call_action (HVAC_SERVICE, "SetModeTarget",  {NewModeTarget = modeTmp}, tonumber(k))
+						else
+							WDSCLog("Thermostat '" .. v .. "' already set to '" .. modeTmp .. "'.  Skipping...",50)
+						end
+					else
+						WDSCLog("OnMode = 99.  Doing nothing.",50)
+					end
+				end
+			end
+		end
+	end
+
+	if (WDSC_Interval ~=0) then
+-- If there was any tripped sensor, check again in 1 minute if there still are tripped sensors.
+		if (wdSensorTripped) then
+			luup.call_delay ("checkForTrippedSensors", 60, "")
+		else
+			restartTimer()
+		end
+	end
+end
+	
+---
+-- Force Polling of sensors to control HVAC
+---
+function ForcedPoll(lul_device)
+	WDSCLog("*** WARNING! User called ForcePoll - manually polling sensors and controlling HVAC ***",2)
+	WDSC_Poll()
+end	
+	
+-- Initialize plugin
+function WDSC_startup(WDSC_device)
+
+-- save device id in global variable for re-use
+    WDSC_DEVICE_ID = WDSC_device    
+
+-- read/initialize variables
+	local Sensors = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Sensors", "*undefined*")
+	local TStats = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Thermostats", "*undefined*")	
+	local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
+
+	Sensors = " " .. Sensors
+	TStats = " " .. TStats
+-- 	
+-- Variables added to control additional features
+--
+-- OnMode has the following modes:
+-- 0  = Off
+-- 1  = AutoChangeOver
+-- 2  = HeatOn
+-- 3  = CoolOn
+-- 4  = Normal mode (turns off Energy Savings Mode)
+-- 99 = Do nothing
+
+	local OnMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OnMode", "99")
+	
+-- OffMode has the following modes:
+-- 0  = Off
+-- 1  = HeatOn
+-- 2  = CoolOn
+-- 3  = Energy Savings Mode
+-- 99 = Do nothing
+
+	local OffMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OffMode", "99")
+
+-- NotifyMode has the following modes:
+-- 0 = Disabled
+-- 1 = Use TwilioPlugin to send SMS
+	
+	local NotifyMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "NotifyMode", "0")
+		
+	local TwilioNumber = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioNumber", "*undefined*")
+	local TwilioMessage = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioMessage", "*undefined*")
+	local TwilioPluginID = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioPluginID", "0")
+
+-- VerboseDebug will toggle the displaying of additional log messages for troubleshooting
+-- 0 = Disabled (default)
+-- 1 = Enabled
+	
+	WDSCVerboseDebug = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "VerboseDebug", "0")
+
+	local CheckAtStart = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "StartupCheck", "0")
+	
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("Verbose Debugging:  On",2)
+	else
+		WDSCLog("Verbose Debugging:  Off",2)
+	end
+	
+	if (Sensors == "*undefined*") then
+		WDSCLog("No Input Sensors Specified",1)
+		luup.task('Set the Sensors variable to use',2,'WDSC HVAC Control',-1)
+	end
+
+	if (TStats == "*undefined*") then
+		WDSCLog("No Thermostats Specified",1)
+		luup.task('Set the Thermostats variable to use',2,'WDSC HVAC Control',-1)
+	end
+	
+	WDSCLog("Configured devices:")
+	WDSCLog("Sensors variable: " .. Sensors,2)
+	WDSCLog("Thermostats variable: " .. TStats,2)
+	
+	-- store Sensors in wdSensorIdPair table	
+	wdSensorIdPair=stringToTable(Sensors)
+	
+	-- store TStats in thermostats table 
+	thermostats=stringToTable(TStats)
+	
+	-- enumerate both tables, displaying contents to log for debugging
+	
+	for k, v in pairs (wdSensorIdPair) do
+		WDSCLog("Sensor ID: " .. k .. " - " .. v,2)
+	end
+	
+	for k, v in pairs (thermostats) do
+		WDSCLog("Thermostat ID: " .. k .. " - " .. v,2)
+	end
+	
+	
+-- start delay timer
+	if (CheckAtStart == "1") then
+		WDSCLog("Check at start enabled.",2)
+		WDSC_Poll()
+	else
+		restartTimer()
+	end
+		
+end
+
+</functions>
+<incoming>
+	<lua>
+
+    </lua>
+</incoming>
+<startup>WDSC_startup</startup>
+<actionList>
+	<action>
+		<serviceId>urn:wdsc-hvac-org:device:WDSC_HVAC1</serviceId>
+		<name>RestartPolling</name>
+		<run>
+			WDSC_Restart(lul_device, lul_settings.delay)
+		</run>
+	</action>
+	<action>
+		<serviceId>urn:wdsc-hvac-org:device:WDSC_HVAC1</serviceId>
+		<name>ForcePoll</name>
+		<run>
+			ForcedPoll(lul_device)
+		</run>
+	</action>
+</actionList>
+</implementation>

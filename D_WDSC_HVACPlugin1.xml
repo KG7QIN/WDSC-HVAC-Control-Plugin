@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+	<specVersion>
+		<major>1</major>
+		<minor>0</minor>
+	</specVersion>
+	<device>
+		<deviceType>urn:schemas-wdsc-hvac-org:device:WDSC_HVAC:1</deviceType>
+		<friendlyName>Window, Door, and Sensor Control for HVAC</friendlyName>
+		<manufacturer>Digiflux.org</manufacturer>
+		<manufacturerURL>http://new.digiflux.org</manufacturerURL>
+		<modelDescription>Control to stop and start your HVAC system based on sensor inputs for Vera</modelDescription>
+		<modelName>WDSC HVAC Control</modelName>
+		<modelNumber>1.0</modelNumber>
+		<protocol>cr</protocol>
+		<handleChildren>0</handleChildren>
+		<UDN>uuid:wdsc-hvac-org-1_1-1234567890001</UDN>
+		<UPC>123456789</UPC>
+		<serviceList>
+			<service>
+				<serviceType>urn:schemas-wdsc-hvac-org:device:WDSC_HVAC:1</serviceType>
+				<serviceId>urn:wdsc-hvac-org:device:WDSC_HVAC1</serviceId>
+				<SCPDURL>S_WDSC_HVACPlugin1.xml</SCPDURL>
+			</service>
+		</serviceList>
+		<implementationList>
+			<implementationFile>I_WDSC_HVACPlugin1.xml</implementationFile>
+		</implementationList>
+		<presentationURL>http://forum.micasaverde.com/index.php/topic,4327.105.html</presentationURL>
+	</device>
+</root>
