@@ -1,7 +1,7 @@
 # WDSC-HVAC-Control-Plugin
 Vera - WDSC HVAC Control Plugin (a.k.a If door is opened for 5 minutes...turn off air)
 
-This is a Vera 3 (UI5) plugin I wrote.  This code and accompanying documentation was originally publihsed to the Mios Trac SVN repo at:
+This is a Vera 3 (UI5) plugin I wrote.  This code and accompanying documentation was originally published to the MIOS Trac SVN repo at:
 http://code.mios.com/trac/mios_wdsc-hvac 
 
 I have moved it here so that it can be with the other code/projects I have on Github.
