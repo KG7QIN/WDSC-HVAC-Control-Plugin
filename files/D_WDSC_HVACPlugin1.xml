@@ -12,15 +12,15 @@
 		<manufacturerURL>http://new.digiflux.org</manufacturerURL>
 		<modelDescription>Control to stop and start your HVAC system based on sensor inputs for Vera</modelDescription>
 		<modelName>WDSC HVAC Control</modelName>
-		<modelNumber>1.1</modelNumber>
+		<modelNumber>1.2</modelNumber>
 		<protocol>cr</protocol>
 		<handleChildren>0</handleChildren>
 		<UDN>uuid:wdsc-hvac-org-1_1-1234567890001</UDN>
 		<UPC>123456789</UPC>
 		<serviceList>
 			<service>
-				<serviceType>urn:schemas-wdsc-hvac-org:device:WDSC_HVAC:1</serviceType>
-				<serviceId>urn:wdsc-hvac-org:device:WDSC_HVAC1</serviceId>
+				<serviceType>urn:schemas-wdsc-hvac-org:service:WDSC_HVAC:1</serviceType>
+				<serviceId>urn:wdsc-hvac-org:serviceId:WDSC_HVAC1</serviceId>
 				<SCPDURL>S_WDSC_HVACPlugin1.xml</SCPDURL>
 			</service>
 			<service>

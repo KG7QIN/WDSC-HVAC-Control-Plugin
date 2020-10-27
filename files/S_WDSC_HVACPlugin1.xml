@@ -11,6 +11,11 @@
 			<defaultValue>0</defaultValue>
 			<shortCode>status</shortCode>
 		</stateVariable>
+		<stateVariable sendEvents="no">
+			<name>OffMode</name>
+			<dataType>int</dataType>
+			<defaultValue>99</defaultValue>
+		</stateVariable>
 	</serviceStateTable>
 	<actionList>
 		<action>

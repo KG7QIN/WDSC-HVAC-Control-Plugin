@@ -3,7 +3,7 @@
 <functions>
 
 -- ******************************************************
--- Window, Door, and Sensor HVAC Control (WDSC HVAC) plugin v1.0
+-- Window, Door, and Sensor HVAC Control (WDSC HVAC) plugin v1.2
 -- Code originally by mcvflorin and posted to
 -- http://forum.micasaverde.com/index.php/topic,4327.45.html
 -- Packaged in plugin form by SOlivas, with modifications 
@@ -15,6 +15,11 @@
 --       version.  May be added in a future release.
 -- 1.1 - Implemented urn:upnp-org:serviceId:SwitchPower1 to make it easy to trigger scenes when OnMode and 
 --       OffMode fire.  Also added icon in .json file.
+-- 1.2 - Implemented temperature sensor support.  By defining temperature sensors, a high and low
+--       limit and an action to do if each it reached or exceeded, you can control your HVAC system
+--       based on climate conditions.  Direct Twilio Plugin support has been removed.
+--		 Also standardized the values used to control the settings across all modes.
+--
 --
 -- While I do not claim copyright for this plugin, I do feel that the following from the BSD license
 -- is appropriate, since this is controlling your thermostat connected to your HVAC equipment and there 
@@ -39,45 +44,87 @@
 -- ** A modified version of the String 2 Lua code found at: 
 -- **    http://www.gymbyl.com/programming/s2t.html
 --
+-- Plugin settings:
+-- VerboseDebug will toggle the displaying of additional log messages for troubleshooting
+-- 0 = Disabled (default)
+-- 1 = Enabled
+--
+-- OnMode, OffMode, HTMode, LTMode can be one of the following:
+-- 0  = Off (default for OffMode, 99 for rest)
+-- 1  = HeatOn
+-- 2  = CoolOn
+-- 3  = Energy Savings Mode
+-- 4  = Normal mode (turns off Energy Savings Mode)
+-- 5  = AutoChangeOver
+-- 6  = AuxHeatOn
+-- 7  = EconomyHeatOn
+-- 8  = EmergencyHeatOn
+-- 9  = AuxCoolOn
+-- 10 = EconomyCoolOn
+-- 11 = BuildingProtection
+-- 99 = Do nothing
+--
+-- PriorityMode defines if Window/Door or Temperature events have priority for controlling your HVAC
+-- 0 = Window/Door (default)
+-- 1 = Temperature (any)
+-- 2 = High temperature 
+-- 3 = Low temperature
+--
+--	EnergySavingsMode has the following options:
+-- 0 = Use SwitchPower service only (default)
+-- 1 = Use EnergySavingsMode operating mode only
+--
 -- ******************************************************
 
 -- global declarations
-local WDSC_PLUGIN_SID = "urn:wdsc-hvac-org:device:WDSC_HVAC1"
+local WDSC_PLUGIN_SID = "urn:wdsc-hvac-org:serviceId:WDSC_HVAC1"
 local HVAC_SERVICE = "urn:upnp-org:serviceId:HVAC_UserOperatingMode1"
 local SECURITY_SENSOR_SERVICE ="urn:micasaverde-com:serviceId:SecuritySensor1"
 local SWITCH_SERVICE = "urn:upnp-org:serviceId:SwitchPower1"
+local TEMPERATURE_SERVICE = "urn:upnp-org:serviceId:TemperatureSensor1"
+local HA_DEVICE_SERVICE = "urn:micasaverde-com:serviceId:HaDevice1"
 
 -- define tables
 local wdSensorIdPair = {}
 local thermostats = {}
+local high_temp_sensors = {}
+local low_temp_sensors = {}
+local useHighTemp = 0
+local useLowTemp = 0
 local WDSC_DEVICE_ID = 0
 local WDSCVerboseDebug = 0
+local SafeMode = 1
+ 
+-- Read/Write Variable constructor 
+function Variable (device, service, variable, debug)
+	return {
+		get = function (x,y) 
+				if (tonumber(debug) == 1) then
+					WDSCLog("Variable.get: " .. variable .. " / y or x: " .. (y or x) ,2)
+				end
+				local var = luup.variable_get (service, variable, device)
+					if (var == nil) then
+						WDSCLog("Variable '" .. variable .. "' not defined, setting to '" .. (y or x) .. "'",2)
+						var = y or x
+						luup.variable_set (service, variable, var, device)
+					end
+				return var
+				end;
+		set = function (x,y) 
+				if (tonumber(debug) == 1) then
+					WDSCLog("Variable.set: " .. variable .. " / y or x: " .. (y or x) ,2)
+				end
+				local var = luup.variable_set (service, variable, y or x, device)
+				return var
+				end;
+	}
+end 
 
 -- Log function
 function WDSCLog(message, lvl)
    luup.log("WDSC HVAC- " .. message, lvl)
 end
   
--- WriteVariable function
-function writeVariable(lul_device, devicetype, name, value)
-		var = value
-        luup.variable_set(devicetype,name,var,lul_device)
-end
-
--- ReadVariable or set to default function
-function readVariable(lul_device, devicetype, name, defaultValue)
-	if (WDSCVerboseDebug == "1") then
-		WDSCLog("readVariable: " .. name,2)
-	end
-	local var = luup.variable_get(devicetype,name, lul_device)
-	if (var == nil) then
-		WDSCLog("Variable '" .. name .. "' not defined, setting to '" .. defaultValue .. "'",2)
-		var = defaultValue
-		luup.variable_set(devicetype,name,var,lul_device)
-		end
-	return var
-end
-
 ---
 -- ****************************************
 -- String 2 table functions
@@ -152,7 +199,6 @@ function stringToTable(str)
 			WDSCLog("String2Table: rightSide - " .. rightSide,2)
 		end
 		
---		t[leftSide]=getValue(rightSide)
 		t[leftSide]=rightSide
 	end
 		
@@ -162,55 +208,179 @@ end
 -- ****************************************
 ---
 
-
 ---
--- Restart timer for checks
+-- Temperature sensor check routines
 ---
-function restartTimer()
-	-- check the default poll period and resubmit using
-	-- the value set in Refresh or default it to 300 seconds (5 minutes)
-	local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
-    WDSC_Interval = tonumber(WDSC_Interval)
-  
-	-- if not 0, but less than 300 or more than 86400, reset to 300 (default)
-    if (WDSC_Interval == nil or (WDSC_Interval ~= 0 and WDSC_Interval &lt; 300) or WDSC_Interval > 86400) then
-        WDSC_Interval = "300"
-		writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", WDSC_Interval)
-    end
+local function WDSC_TempCheck(t, tFlg)
+	local tSensorTripped = false
 
-	WDSCLog("Refresh interval: " .. WDSC_Interval,50)
-	-- 0 = disable automatic refresh
-    if (WDSC_Interval ~=0) then
-        luup.call_timer("WDSC_Poll", 1, tostring(WDSC_Interval).."s", "")
-    end
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("WDSC_TempCheck called...",2)
+	end
+	
+-- If any sensor is tripped, set the global variable for tripped status.
+	for k, v in pairs (t) do
+		local curTemp = luup.variable_get (TEMPERATURE_SERVICE, "CurrentTemperature", tonumber(k))
+		if (tFlg == 1) then
+			-- High temp sensor check
+			if (tonumber(curTemp) > tonumber(v)) then
+				WDSCLog("High Temp Sensor on '" .. k .. "' is tripped! (" .. v .. ")",2)
+				tSensorTripped = true
+				break
+			end
+		else
+			-- Low temp sensor check
+			if (tonumber(curTemp) &lt; tonumber(v)) then
+				WDSCLog("Low Temp Sensor on '" .. k .. "' is tripped! (" .. v .. ")",2)
+				tSensorTripped = true
+				break
+			end
+		end
+	end
+	return tSensorTripped
 end
 
 ---
--- Reset/Restart Polling Delay
----
-function WDSC_Restart(lul_device, delay)
-    WDSC_Interval = tonumber(delay)
-  
-	-- if not 0, but less than 300 or more than 86400, reset to 300 (default)
-    if (WDSC_Interval == nil or (WDSC_Interval ~= 0 and WDSC_Interval &lt; 300) or WDSC_Interval > 86400) then
-        WDSC_Interval = "300"
-		writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", WDSC_Interval)
-    end
+-- High temperature sensor check
+--- 
+local function WDSC_HighTempCheck()
+	local trippedFlag = false
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("WDSC_HighTempCheck called...",2)
+	end
 
-	WDSCLog("Refresh interval: " .. WDSC_Interval,50)
-	-- 0 = disable automatic refresh
-    if (WDSC_Interval ~=0) then
-        luup.call_timer("WDSC_Poll", 1, tostring(WDSC_Interval).."s", "")
-    end
-end	
+	if (useHighTemp == 1) then
+		trippedFlag = WDSC_TempCheck(high_temp_sensors, 1)
+		if (trippedFlag == false) then
+			WDSCLog("High Temperature Sensors not tripped...",50)
+		end		
+	end
+	return trippedFlag
+end
 
 ---
+-- Low temperature sensor check
+---
+local function WDSC_LowTempCheck()
+	local trippedFlag = false
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("WDSC_LowTempCheck called...",2)
+	end
+
+	if (useLowTemp == 1) then
+		trippedFlag = WDSC_TempCheck(low_temp_sensors, 0)
+		if (trippedFlag == false) then
+			WDSCLog("Low Temperature Sensors not tripped...",50)
+		end	
+	end
+	return trippedFlag
+end
+
+---
+-- Tripped Sensor mode change routines
+--
+local function WDSC_ModeChange(NewMode)
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("WDSC_ModeChange called - NewMode=" .. NewMode,2)
+	end
+
+	local modeTmp = "Off"
+	for k, v in pairs (thermostats) do
+		if (NewMode == 1) then
+			modeTmp = "HeatOn"
+		elseif (NewMode == 2) then
+			modeTmp = "CoolOn"
+		elseif (NewMode == 5) then
+			modeTmp = "AutoChangeOver"
+		elseif (NewMode == 6) then	
+			modeTmp = "AuxHeatOn"
+		elseif (NewMode == 7) then	
+			modeTmp = "EconomyHeatOn"
+		elseif (NewMode == 8) then	
+			modeTmp = "EmergencyHeatOn"
+		elseif (NewMode == 9) then	
+			modeTmp = "AuxCoolOn"
+		elseif (NewMode == 10) then
+			modeTmp = "EconomyCoolOn"
+		elseif (NewMode == 11) then	
+			modeTmp = "BuildingProtection"
+		end
+			
+		if (NewMode == 3) then
+			local TESavingsMode = tonumber(vTESavingsMode.get("0"))
+			if (TESavingsMode == 0) then
+				local status = luup.variable_get(SWITCH_SERVICE, "Status", tonumber(k)) or "0"
+				if (status == "0") then
+					WDSCLog("Thermostat " .. v .. " is already in Energy Savings Mode.  Skipping...",50)
+				else
+					WDSCLog("Switching Thermostat " .. v .. " to Energy Savings Mode.",50)
+					luup.call_action(SWITCH_SERVICE,"SetTarget",{ newTargetValue="0" }, tonumber(k))
+				end
+			else
+				local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","ModeStatus",tonumber(k))
+				if (modeStatus == "EnergySavingsMode") then 
+					WDSCLog("Thermostat " .. v .. " is already in Energy Savings Mode.  Skipping...",50)
+				else
+					luup.call_action (HVAC_SERVICE, "SetModeTarget",  {NewModeTarget = "EnergySavingsMode"}, tonumber(k))
+					luup.call_action (HVAC_SERVICE, "SetEnergyModeTarget", {NewModeTarget = "EnergySavingsMode"}, tonumber(k))
+				end
+			end	
+		elseif (NewMode == 4) then
+			local TESavingsMode = tonumber(vTESavingsMode.get("0"))
+			if (TESavingsMode == 0) then
+				local status = luup.variable_get(SWITCH_SERVICE, "Status", tonumber(k)) or "0"
+				if (status == "1") then
+					WDSCLog("Thermostat " .. v .. " is already in Normal Mode.  Skipping...",50)
+				else
+					WDSCLog("Switching Thermostat " .. v .. " to Normal Mode.",50)
+					luup.call_action(SWITCH_SERVICE,"SetTarget",{ newTargetValue="1" }, tonumber(k))
+				end
+			else
+				local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","EnergyModeStatus",tonumber(k))
+				if (modeStatus == "Normal") then
+					WDSCLog("Thermostat " .. v .. " is already in Normal Mode.  Skipping...",50)
+				else
+					luup.call_action (HVAC_SERVICE, "SetEnergyModeTarget", {NewModeTarget = "Normal"}, tonumber(k))
+				end
+			end
+		else
+			if (NewMode ~=99) then
+				local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","ModeStatus",tonumber(k))
+				if (modeTmp ~= modeStatus) then
+					WDSCLog("Turning thermostat '" .. v .. "' to '" .. modeTmp .. "'.",50)
+					luup.call_action (HVAC_SERVICE, "SetModeTarget",  {NewModeTarget = modeTmp}, tonumber(k))
+				else
+					WDSCLog("Thermostat '" .. v .. "' already set to '" .. modeTmp .. "'.  Skipping...",50)
+				end
+			else
+				WDSCLog("NewMode = 99.  Doing nothing.",50)
+			end
+		end
+	end
+end
+	
+--- ****
 -- Check if there are tripped sensors. If there are, then turn the thermostats to OffMode.
----
-function checkForTrippedSensors()
-    -- Assume that no sensors are still tripped.
-    wdSensorTripped = false
+--- ****
+function checkForTrippedSensors()	
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("checkForTrippedSensors called...",2)
+	end
 
+-- read variables
+	local OffMode = vOffMode.get(99)
+	local HTMode = tonumber(vHTMode.get("99"))
+	local LTMode = tonumber(vLTMode.get("99"))
+	local PriorityMode = tonumber(vPriorityMode.get("0"))
+	local HmodeTmp = ""
+	local LmodeTmp = ""
+	
+-- Assume that no sensors are still tripped.
+    wdSensorTripped = false
+	htSensorTripped = false
+	ltSensorTripped = false
+		
+-- Check window and door sensors	
     for k, v in pairs(wdSensorIdPair) do
         local tripped = luup.variable_get (SECURITY_SENSOR_SERVICE, "Tripped", tonumber(k)) or "0"
         if (tripped == "0") then
@@ -222,82 +392,119 @@ function checkForTrippedSensors()
         end
     end
 
-	local OffMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OffMode", "0")
-	OffMode = tonumber(OffMode)
-	local modeTmp = "Off"
+-- Check if High Temperature sensor has been tripped
+	htSensorTripped = WDSC_HighTempCheck()
 
-	local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
-	WDSC_Interval = tonumber(WDSC_Interval)
+-- Check if Low Temperature sensor has been tripped
+	ltSensorTripped = WDSC_LowTempCheck()
+
+	WDSC_Interval = tonumber(vWDSC_Interval.get("300"))
 	
 -- Only run if the Refresh interval is not set to 0 -- keeps thermostat from being set to OffMode when
--- it may be controlled elsewhere
-	
-    if (wdSensorTripped and (WDSC_Interval ~=0)) then
+-- it may be controlled elsewhere	
+    if ((wdSensorTripped or htSensorTripped or ltSensorTripped) and (WDSC_Interval ~=0)) then
 
--- Check Status, if 1 then change to 0
-		local pStatus = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", "0")
-		if (pStatus == "1") then
-			writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", 0)	
-			writeVariable(WDSC_DEVICE_ID, SWITCH_SERVICE, "Status", 0)
+-- Check Status, if 1 then change to 0	
+		pStatus = tonumber(vPStatus.get("0"))
+		if (pStatus == 1) then
+			vPStatus.set(0)
+			vSStatus.set(0)
 			WDSCLog("Status is now 0 (Off)",2)
 		else
 			WDSCLog("Status already 0 (Off), skipping...",2)
 		end
-	
-		local NotifyMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "NotifyMode", "0")
-		local TwilioNumber = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioNumber", "*undefined*")
-		local TwilioMessage = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioMessage", "*undefined*")
-		local TwilioPluginID = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioPluginID", "0")
-		
-		if (NotifyMode == "1") then
-			WDSCLog("Sending notification to " .. TwilioNumber .. " - '" .. TwilioMessage .. "'",50)
-			luup.call_action("urn:twilioapi-org:serviceId:TwilioInterface1", "SendSMSMessage",{ PhoneNumber=TwilioNumber, Message=TwilioMessage}, TwilioPluginID)
-		end
-	
-        for k, v in pairs (thermostats) do
-			if (OffMode == 1) then
-				modeTmp = "HeatOn"
-			elseif (OffMode == 2) then
-				modeTmp = "CoolOn"
-			end
-			
-			if (OffMode == 3) then
-				local status = luup.variable_get(SWITCH_SERVICE, "Status", tonumber(k)) or "0"
-				if (status == "0") then
-					WDSCLog("Thermostat " .. v .. " is already in Energy Savings Mode.  Skipping...",50)
-				else
-					WDSCLog("Switching Thermostat " .. v .. " to Energy Savings Mode.",50)
-					luup.call_action(SWITCH_SERVICE,"SetTarget",{ newTargetValue="0" }, tonumber(k))
-				end
-			else
-				if (OffMode ~=99) then
-					local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","ModeStatus",tonumber(k))
-					if (modeTmp ~= modeStatus) then
-						WDSCLog("Turning thermostat '" .. v .. "' to '" .. modeTmp .. "'.",50)
-						luup.call_action (HVAC_SERVICE, "SetModeTarget",  {NewModeTarget = modeTmp}, tonumber(k))
+
+-- check to see if a single or multiple sensors were tripped
+-- SafeMode keeps user from shooting self in foot if they forget change PriorityMode from default
+		if ( SafeMode == 1 or ((wdSensorTripped and (htSensorTripped or ltSensorTripped)) or (htSensorTripped and (wdSensorTripped or ltSensorTriped)))) then
+
+-- multiple sensors are tripped -		
+-- logic to see who wins and calls WDSC_ModeChange(OffMode/HTMode/LTMode)
+			if (PriorityMode == 1) then	
+				if (htSensorTripped or ltSensorTripped) then
+					WDSCLog("Any Temperature Sensor (high then low) takes priority",2)
+					if (htSensorTripped) then
+						WDSCLog("Using HTMode",2)
+						WDSC_ModeChange(HTMode)
 					else
-						WDSCLog("Thermostat '" .. v .. "' already set to '" .. modeTmp .. "'.  Skipping...",50)
+						WDSCLog("Using LTMode",2)
+						WDSC_ModeChange(LTMode)
 					end
 				else
-					WDSCLog("OffMode = 99.  Doing nothing.",50)
+					WDSCLog("No Temperature	Sensor tripped -- using Window/Door Sensor OffMode.",2)
+					WDSC_ModeChange(OffMode)
 				end
+			elseif (PriorityMode == 2) then
+				if (ltSensorTripped or htSensorTripped) then
+					WDSCLog("Any Temperature Sensor (low then high) takes priority",2)
+					if (ltSensorTripped) then
+						WDSCLog("Using LTMode",2)
+						WDSC_ModeChange(LTMode)
+					else
+						WDSCLog("Using HTMode",2)
+						WDSC_ModeChange(HTMode)
+					end
+				else
+					WDSCLog("No Temperature Sensor tripped -- using Window/Door Sensor OffMode.",2)
+					WDSC_ModeChange(OffMode)			
+				end
+			elseif (PriorityMode == 3) then
+				if (ltSensorTripped) then
+					WDSCLog("Low Temperature Sensor only mode",2)
+					WDSC_ModeChange(LTMode)
+				else
+					WDSCLog("Low Temperature Sensor not tripped -- using Window/Door Sensor OffMode.",2)
+					WDSC_ModeChange(OffMode)
+				end
+			elseif (PriorityMode == 4) then
+				if (htSensorTripped) then
+					WDSCLog("High Temperature Sensor only mode",2)
+					WDSC_ModeChange(HTMode)
+				else	
+					WDSCLog("High Temperature Sensor not tripped -- using Window/Door Sensor OffMode.",2)
+					WDSC_ModeChange(OffMode)
+				end
+			else
+			-- Default to 0 - Window/Door sensor takes priority
+				WDSCLog("Window/Door Sensors take priority",2)
+				WDSC_ModeChange(OffMode)
 			end
-        end
-    end
 
+		else
+		
+-- only one sensor is tripped, check to see which and change to mode 
+			if (htSensorTripped) then
+				WDSCLog("Only High Temperature Sensor Tripped -- setting HTMode.",2)
+				WDSC_ModeChange(HTMode)
+				elseif (ltSensorTripped) then
+				WDSCLog("Only Low Temperature Sensor Tripped -- setting LTMode.",2)
+				WDSC_ModeChange(LTMode)
+			else
+				WDSCLog("Only Door/Window Sensor Tripped -- setting OffMode.",2)
+				WDSC_ModeChange(OffMode)
+			end
+		end
+	end
+		
 -- only restart the timer if the Refresh interval is not 0
 	if (WDSC_Interval ~=0) then
 		restartTimer()
 	end
 end
 
----
+--- ****
 -- Main check function
----
+--- ****
 function WDSC_Poll()
 -- Assume that no sensors are tripped.
 	local wdSensorTripped = false
-
+	local htSensorTripped = false
+	local ltSensorTripped = false
+	
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("WDSC_Poll called...",2)
+	end
+	
 -- If any sensor is tripped, set the global variable for tripped status.
 	for k, v in pairs (wdSensorIdPair) do
 		local tripped = luup.variable_get (SECURITY_SENSOR_SERVICE, "Tripped", tonumber(k)) or "0"
@@ -309,20 +516,24 @@ function WDSC_Poll()
 			break
 		end
 	end
+
+-- Check if High Temperature sensor has been tripped
+	htSensorTripped = WDSC_HighTempCheck()
+
+-- Check if Low Temperature sensor has been tripped
+	ltSensorTripped = WDSC_LowTempCheck()
 	
--- Set Thermostat back to mode defined "OnMode" if no sensors are not tripped (default="Off")
-	if(wdSensorTripped) then
-	
+-- Set Thermostat back to mode defined "OnMode" if no sensors are tripped (default="Off")
+	if ((wdSensorTripped or htSensorTripped or ltSensorTripped)) then
 		WDSCLog("Sensor was tripped, skipping...",50)
 	else
-		local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
-		WDSC_Interval = tonumber(WDSC_Interval)
-	
+		WDSC_Interval = tonumber(vWDSC_Interval.get("300"))
+
 -- Check Status, if 0 then change to 1
-		local pStatus = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", "0")
-		if (pStatus == "0") then
-			writeVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", 1)
-			writeVariable(WDSC_DEVICE_ID, SWITCH_SERVICE, "Status", 1)
+		pStatus = tonumber(vPStatus.get("0"))
+		if (pStatus == 0) then
+			vPStatus.set(1)
+			vSStatus.set(1)
 			WDSCLog("Status is now 1 (On)",2)
 		else
 			WDSCLog("Status already 1 (On), skipping...",2)			
@@ -332,56 +543,22 @@ function WDSC_Poll()
 -- it may be controlled elsewhere
 
 		if (WDSC_Interval ~=0) then
-			local OnMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OnMode", "1")
-			OnMode = tonumber(OnMode)
-			local modeTmp = "Off"
-		
-			for k, v in pairs (thermostats) do
-				local tStat = luup.variable_get(HVAC_SERVICE, "ModeTarget", tonumber(k))
-			
-				if (OnMode == 1) then
-					modeTmp = "AutoChangeOver"
-				elseif (OnMode == 2) then
-					modeTmp = "HeatOn"
-				elseif (OnMode == 3) then
-					modeTmp = "CoolOn"
-				end
-
-				if (OnMode == 4) then
-					local status = luup.variable_get(SWITCH_SERVICE, "Status", tonumber(k)) or "0"
-					if (status == "0") then
-						WDSCLog("Switching Thermostat " .. v .. " to Normal Mode.",50)
-						luup.call_action(SWITCH_SERVICE,"SetTarget",{ newTargetValue="1" }, tonumber(k))
-					else
-						WDSCLog("Thermostat " .. v .. " is already in Normal Mode.  Skipping...",50)							
-					end					
-				else
-					if (OnMode ~=99) then
-						local modeStatus = luup.variable_get("urn:upnp-org:serviceId:HVAC_UserOperatingMode1","ModeStatus",tonumber(k))
-						if (modeTmp ~= modeStatus) then
-							WDSCLog("Turning thermostat '" .. v .. "' to '" .. modeTmp .. "'.",50)
-							luup.call_action (HVAC_SERVICE, "SetModeTarget",  {NewModeTarget = modeTmp}, tonumber(k))
-						else
-							WDSCLog("Thermostat '" .. v .. "' already set to '" .. modeTmp .. "'.  Skipping...",50)
-						end
-					else
-						WDSCLog("OnMode = 99.  Doing nothing.",50)
-					end
-				end
-			end
+			OnMode = tonumber(vOnMode.get("5"))	
+			WDSC_ModeChange(OnMode)
 		end
+		
 	end
 
-	if (WDSC_Interval ~=0) then
 -- If there was any tripped sensor, check again in 1 minute if there still are tripped sensors.
-		if (wdSensorTripped) then
+	if (WDSC_Interval ~=0) then
+		if ((wdSensorTripped or htSensorTripped or ltSensorTripped)) then
 			luup.call_delay ("checkForTrippedSensors", 60, "")
 		else
 			restartTimer()
 		end
 	end
 end
-	
+
 ---
 -- Force Polling of sensors to control HVAC
 ---
@@ -389,74 +566,119 @@ function ForcedPoll(lul_device)
 	WDSCLog("*** WARNING! User called ForcePoll - manually polling sensors and controlling HVAC ***",2)
 	WDSC_Poll()
 end	
+
+---
+-- Restart timer for checks
+---
+function restartTimer()
+	-- check the default poll period and resubmit using
+	-- the value set in Refresh or default it to 300 seconds (5 minutes)
+
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("restartTimer called...",2)
+	end
+	  
+	WDSC_Interval = tonumber(vWDSC_Interval.get("300"))
+  
+	-- if not 0, but less than 300 or more than 86400, reset to 300 (default)
+    if (WDSC_Interval == nil or (WDSC_Interval ~= 0 and WDSC_Interval &lt; 300) or WDSC_Interval > 86400) then
+        WDSC_Interval = "300"
+		vWDSC_Interval.set(WDSC_Interval)
+    end
+
+	WDSCLog("Refresh interval: " .. WDSC_Interval,50)
+
+	-- 0 = disable automatic refresh
+    if (WDSC_Interval ~=0) then
+        luup.call_timer("WDSC_Poll", 1, tostring(WDSC_Interval).."s", "")
+    end
+end
+
+---
+-- Reset/Restart Polling Delay
+---
+function WDSC_Restart(lul_device, delay)
+    WDSC_Interval = tonumber(delay)
+
+	if (WDSCVerboseDebug == "1") then
+		WDSCLog("WDSC_Restart called...",2)
+	end
 	
+	-- if not 0, but less than 300 or more than 86400, reset to 300 (default)
+    if (WDSC_Interval == nil or (WDSC_Interval ~= 0 and WDSC_Interval &lt; 300) or WDSC_Interval > 86400) then
+        WDSC_Interval = "300"
+		vWDSC_Interval.set(WDSC_Interval)
+    end
+
+	WDSCLog("Refresh interval: " .. WDSC_Interval,50)
+
+	-- 0 = disable automatic refresh
+    if (WDSC_Interval ~=0) then
+        luup.call_timer("WDSC_Poll", 1, tostring(WDSC_Interval).."s", "")
+    end
+end
+
+-- *************************************	
 -- Initialize plugin
+-- *************************************
 function WDSC_startup(WDSC_device)
+	local tempVar = 0	
 
--- save device id in global variable for re-use
+	-- save device id in global variable for re-use
     WDSC_DEVICE_ID = WDSC_device    
-
--- read/initialize variables
-	local Sensors = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Sensors", "*undefined*")
-	local TStats = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Thermostats", "*undefined*")	
-	local WDSC_Interval = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", "300")
-
-	Sensors = " " .. Sensors
-	TStats = " " .. TStats
--- 	
--- Variables added to control additional features
---
--- OnMode has the following modes:
--- 0  = Off
--- 1  = AutoChangeOver
--- 2  = HeatOn
--- 3  = CoolOn
--- 4  = Normal mode (turns off Energy Savings Mode)
--- 99 = Do nothing
-
-	local OnMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OnMode", "99")
 	
--- OffMode has the following modes:
--- 0  = Off
--- 1  = HeatOn
--- 2  = CoolOn
--- 3  = Energy Savings Mode
--- 99 = Do nothing
+	vDebug = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "VerboseDebug", 0)
+	WDSCVerboseDebug = vDebug.get(0)
 
-	local OffMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OffMode", "99")
-
--- NotifyMode has the following modes:
--- 0 = Disabled
--- 1 = Use TwilioPlugin to send SMS
-	
-	local NotifyMode = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "NotifyMode", "0")
-		
-	local TwilioNumber = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioNumber", "*undefined*")
-	local TwilioMessage = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioMessage", "*undefined*")
-	local TwilioPluginID = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "TwilioPluginID", "0")
-
--- VerboseDebug will toggle the displaying of additional log messages for troubleshooting
--- 0 = Disabled (default)
--- 1 = Enabled
-	
-	WDSCVerboseDebug = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "VerboseDebug", "0")
-
-	local CheckAtStart = readVariable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "StartupCheck", "0")
-	
 	if (WDSCVerboseDebug == "1") then
 		WDSCLog("Verbose Debugging:  On",2)
 	else
 		WDSCLog("Verbose Debugging:  Off",2)
 	end
 	
-	if (Sensors == "*undefined*") then
+-- initialize variables
+	vSensors = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Sensors", WDSCVerboseDebug)
+	vTStats = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Thermostats", WDSCVerboseDebug)	
+	vWDSC_Interval = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Refresh", WDSCVerboseDebug)
+	vHTSensors = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "HighTempSensors", WDSCVerboseDebug)
+	vLTSensors = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "LowTempSensors", WDSCVerboseDebug)
+	vPStatus = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "Status", WDSCVerboseDebug)
+	vSStatus = Variable(WDSC_DEVICE_ID, SWITCH_SERVICE, "Status", WDSCVerboseDebug)
+	vOnMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OnMode", WDSCVerboseDebug)
+	vHTMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "HighTempMode", WDSCVerboseDebug)
+	vLTMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "LowTempMode", WDSCVerboseDebug)
+	vOffMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "OffMode", WDSCVerboseDebug)
+	vPriorityMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "PriorityMode", WDSCVerboseDebug)
+	vCheckAtStart = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "StartupCheck", WDSCVerboseDebug)
+	vTESavingsMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "EnergySavingsMode", WDSCVerboseDebug)
+	vSafeMode = Variable(WDSC_DEVICE_ID, WDSC_PLUGIN_SID, "SafeMode", WDSCVerboseDebug)
+	
+	local tempVar = vWDSC_Interval.get("300")
+	local Sensors = " " .. vSensors.get("*undefined*")
+	local TStats = " " .. vTStats.get("*undefined*")
+	local HTSensors = " " .. vHTSensors.get("*undefined*")
+	local LTSensors = " " .. vLTSensors.get("*undefined*")
+	local OnMode = vOnMode.get("99")	
+	local HTMode = vHTMode.get("99")
+	local LTMode = vLTMode.get("99")
+	local OffMode = vOffMode.get("99")
+	local PriorityMode = vPriorityMode.get("0")	
+	local CheckAtStart = vCheckAtStart.get("0")
+	local TESavingsMode = tonumber(vTESavingsMode.get("0"))
+	SafeMode = tonumber(vSafeMode.get("1"))
+	
+-- Check to see if this is the first time the plugin has been run, of if it isn't configured
+-- correctly	
+	if (Sensors == " *undefined*") then
 		WDSCLog("No Input Sensors Specified",1)
 		luup.task('Set the Sensors variable to use',2,'WDSC HVAC Control',-1)
+		return false
 	end
 
-	if (TStats == "*undefined*") then
+	if (TStats == " *undefined*") then
 		WDSCLog("No Thermostats Specified",1)
 		luup.task('Set the Thermostats variable to use',2,'WDSC HVAC Control',-1)
+		return false
 	end
 	
 	WDSCLog("Configured devices:")
@@ -469,8 +691,7 @@ function WDSC_startup(WDSC_device)
 	-- store TStats in thermostats table 
 	thermostats=stringToTable(TStats)
 	
-	-- enumerate both tables, displaying contents to log for debugging
-	
+	-- enumerate both tables, displaying contents to log for debugging	
 	for k, v in pairs (wdSensorIdPair) do
 		WDSCLog("Sensor ID: " .. k .. " - " .. v,2)
 	end
@@ -478,7 +699,51 @@ function WDSC_startup(WDSC_device)
 	for k, v in pairs (thermostats) do
 		WDSCLog("Thermostat ID: " .. k .. " - " .. v,2)
 	end
+
+-- Check to see if HighTempSensors are defined
+	if (HTSensors == " *undefined*") then
+		WDSCLog("No High Temperature Sensors Specified - High Temp check disabled",2)
+	else
+		WDSCLog("HighTempSensors variable: " .. HTSensors,2)
+		useHighTemp = 1
+		high_temp_sensors = stringToTable(HTSensors)
+	end
 	
+-- Check to see if LowTempSensors are defined	
+	if (LTSensors == " *undefined*") then
+		WDSCLog("No Low Temperature Sensors Specified - Low Temp check disabled",2)
+	else
+		WDSCLog("LowTempSensors variable: " .. LTSensors,2)
+		useLowTemp = 1
+		low_temp_sensors=stringToTable(LTSensors)
+	end	
+	
+	-- enumerate high and low temp sensor tables, displaying contents to log for debugging
+	if (useHighTemp) then
+		for k, v in pairs (high_temp_sensors) do
+			WDSCLog("High Temp Sensor ID: " .. k .. " / Trigger value: " .. v,2)
+		end
+	end
+	
+	if (useLowTemp) then
+		for k, v in pairs (low_temp_sensors) do
+			WDSCLog("Low Temp Sensor ID: " .. k .. " / Trigger value: " .. v,2)
+		end
+	end	
+		
+	if (TESavingsMode == 0) then
+		WDSCLog("EnergySavingsMode:  Using PowerSwitch service",2)
+	else
+		WDSCLog("EnergySavingsMode:  Using EnergySavingsMode operating mode",2)
+	end
+
+-- Has SafeMode been defined?
+	if (SafeMode == 1) then
+		WDSCLog("*** SafeMode on ***",2)
+	end
+	
+-- Clear CommFailure flag
+	luup.variable_set (HA_DEVICE_SERVICE, "CommFailure", "0", WDSC_DEVICE_ID)
 	
 -- start delay timer
 	if (CheckAtStart == "1") then
@@ -487,7 +752,7 @@ function WDSC_startup(WDSC_device)
 	else
 		restartTimer()
 	end
-		
+	
 end
 
 </functions>
@@ -499,14 +764,14 @@ end
 <startup>WDSC_startup</startup>
 <actionList>
 	<action>
-		<serviceId>urn:wdsc-hvac-org:device:WDSC_HVAC1</serviceId>
+		<serviceId>urn:wdsc-hvac-org:serviceId:WDSC_HVAC1</serviceId>
 		<name>RestartPolling</name>
 		<run>
 			WDSC_Restart(lul_device, lul_settings.delay)
 		</run>
 	</action>
 	<action>
-		<serviceId>urn:wdsc-hvac-org:device:WDSC_HVAC1</serviceId>
+		<serviceId>urn:wdsc-hvac-org:serviceId:WDSC_HVAC1</serviceId>
 		<name>ForcePoll</name>
 		<run>
 			ForcedPoll(lul_device)
