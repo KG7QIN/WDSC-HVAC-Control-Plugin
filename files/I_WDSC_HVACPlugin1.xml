@@ -3,7 +3,7 @@
 <functions>
 
 -- ******************************************************
--- Window, Door, and Sensor HVAC Control (WDSC HVAC) plugin v1.2
+-- Window, Door, and Sensor HVAC Control (WDSC HVAC) plugin v1.2B
 -- Code originally by mcvflorin and posted to
 -- http://forum.micasaverde.com/index.php/topic,4327.45.html
 -- Packaged in plugin form by SOlivas, with modifications 
@@ -19,6 +19,7 @@
 --       limit and an action to do if each it reached or exceeded, you can control your HVAC system
 --       based on climate conditions.  Direct Twilio Plugin support has been removed.
 --		 Also standardized the values used to control the settings across all modes.
+-- 1.2B- Incorporates change submitted by Charettepa: http://forum.micasaverde.com/index.php/topic,15982.msg131247.html#msg13124
 --
 --
 -- While I do not claim copyright for this plugin, I do feel that the following from the BSD license
@@ -466,9 +467,22 @@ function checkForTrippedSensors()
 				end
 			else
 			-- Default to 0 - Window/Door sensor takes priority
-				WDSCLog("Window/Door Sensors take priority",2)
-				WDSC_ModeChange(OffMode)
-			end
+			-- Change submitted by Charettepa: http://forum.micasaverde.com/index.php/topic,15982.msg131247.html#msg131247
+	            		if (wdSensorTripped or ltSensorTripped or htSensorTripped) then
+               				WDSCLog("Any Sensor (Window/Door then low then high) takes priority",2)
+               				if (wdSensorTripped) then
+	                  			WDSCLog("Using LTMode",2)
+	                  			WDSC_ModeChange(OffMode)
+	               			elseif (ltSensorTripped) then
+        	          			WDSCLog("Using LTMode",2)
+	                  			WDSC_ModeChange(LTMode)
+	               			elseif (htSensorTripped) then
+        	          			WDSCLog("Using HTMode",2)
+                	  			WDSC_ModeChange(HTMode)
+               				end      
+            			end
+         		end
+	
 
 		else
 		
