@@ -44,7 +44,9 @@ The following variables are exposed once the plugin has initialized:
 
 * _**Format:** Needs to be entered in the format of [sensor id#]="name"_
 
-    ````42=UPHall_W, 31=GRFrnt_D, 41=GRLanai_D, 38=UPLBckBR_W, 39=UPRBckBR_W, 36=MastBR_D, 32=LFrtBR_D, 34=LBkBR_D, 35=LwHall_D, 40=LwHall_W````
+Example:
+
+    42=UPHall_W, 31=GRFrnt_D, 41=GRLanai_D, 38=UPLBckBR_W, 39=UPRBckBR_W, 36=MastBR_D, 32=LFrtBR_D, 34=LBkBR_D, 35=LwHall_D, 40=LwHall_W
     
 **Thermostats** = a list of thermostats that will be controlled by this plugin.
 
