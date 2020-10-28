@@ -6,6 +6,12 @@ http://code.mios.com/trac/mios_wdsc-hvac
 
 I have moved it here so that it can be with the other code/projects I have on Github.
 
+Note:  Currently does not work on UI7.  
+
+**Issues**:  Please check the existing issues before submitting a new one-- duplicate issues will be closed without comment.  This plugin does not work on UI7 at this time.   
+
+**Pull requests**:  Please submit all PRs against the develop branch.  Include both a description and any instructions on what features you added/fixed in your PR.  
+
 -------
 
 _Current version: 1.2 - 03 October 2013_
