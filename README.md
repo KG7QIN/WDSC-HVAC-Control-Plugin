@@ -16,7 +16,7 @@ Note:  Currently does not work on UI7.
 
 _Current version: 1.2 - 03 October 2013_
 
- Code originally posted to: ​http://forum.micasaverde.com/index.php/topic,15982.msg121764.html#msg121764
+ Code originally posted to: ​http://forum.micasaverde.com/index.php/topic,15982.msg121764.html#msg121764 (Archive.org link: https://web.archive.org/web/20160817071922/forum.micasaverde.com/index.php/topic,15982.msg121764.html)
 
  * Current information on new versions may be posted to the forum before it appears here. Check the forum post if you can't find the options listed here. 
     
